@@ -22,5 +22,26 @@ def transform_dog(image_path, sigma):
     dog = (s1 - s2)
     dog = 255 - img_as_ubyte(dog)
     
-    path2 = image_path + '_dog.jpg'
+    path2 = image_path[:-4] + '_dog.jpg'
     plt.imsave(path2, dog, cmap='gray')
+    
+    path3 = image_path[:-4] + '_combine.jpg'
+    combine_pictures(image_path, path2, path3)
+    
+def combine_pictures(path_original, path_dog, dest_path):
+    img = Image.open(path_original)
+    img2 = Image.open(path_dog)
+    images = [img, img2]
+    widths, heights = zip(*(i.size for i in images))
+    
+    total_width = sum(widths)
+    max_height = max(heights)
+    
+    new_im = Image.new('RGB', (total_width, max_height))
+
+    x_offset = 0
+    for im in images:
+        new_im.paste(im, (x_offset,0))
+        x_offset += im.size[0]
+    
+    new_im.save(dest_path)
