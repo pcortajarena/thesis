@@ -2,6 +2,7 @@ import os
 from skimage import color, filters, img_as_float, img_as_ubyte
 from skimage.feature import blob_dog
 import matplotlib.pyplot as plt
+from PIL import Image
 
 def read_images_path(path, images_list):
     for x in os.listdir(path):
@@ -9,7 +10,7 @@ def read_images_path(path, images_list):
         if os.path.isdir(path2):
             read_images_path(path2, images_list)
         elif os.path.isfile(path2) and path2.endswith('.jpg'):
-            images.append(path2)
+            images_list.append(path2)
 
 def transform_dog(image_path, sigma):
     img = plt.imread(image_path)
@@ -45,3 +46,11 @@ def combine_pictures(path_original, path_dog, dest_path):
         x_offset += im.size[0]
     
     new_im.save(dest_path)
+    
+def clean_images(path):
+    for x in os.listdir(path):
+        path2 = os.path.join(path, x)
+        if os.path.isdir(path2):
+            clean_images(path2)
+        else if os.path.isfile(path2) and not path2.endswith('combine.jpg'):
+            os.remove(path2)
