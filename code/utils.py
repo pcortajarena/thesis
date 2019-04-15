@@ -48,9 +48,10 @@ def combine_pictures(path_original, path_dog, dest_path):
     new_im.save(dest_path)
     
 def clean_images(path):
+    
     for x in os.listdir(path):
         path2 = os.path.join(path, x)
         if os.path.isdir(path2):
             clean_images(path2)
-        else if os.path.isfile(path2) and not path2.endswith('combine.jpg'):
+        elif os.path.isfile(path2) and not path2.endswith('combine.jpg'):
             os.remove(path2)
