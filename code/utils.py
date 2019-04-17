@@ -12,7 +12,7 @@ def read_images_path(path, images_list):
         elif os.path.isfile(path2) and path2.endswith('.jpg'):
             images_list.append(path2)
 
-def transform_dog(image_path, sigma):
+def transform_dog(image_path, sigma, dest_path):
     img = plt.imread(image_path)
     img = img_as_float(img)
     img_gray = color.rgb2gray(img)
@@ -26,8 +26,7 @@ def transform_dog(image_path, sigma):
     path2 = image_path[:-4] + '_dog.jpg'
     plt.imsave(path2, dog, cmap='gray')
     
-    path3 = image_path[:-4] + '_combine.jpg'
-    combine_pictures(image_path, path2, path3)
+    combine_pictures(image_path, path2, dest_path)
     
 def combine_pictures(path_original, path_dog, dest_path):
     img = Image.open(path_original)
