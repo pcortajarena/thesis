@@ -1,14 +1,17 @@
-# USAGE
-# python detect_edges_image.py --edge-detector hed_model --image images/guitar.jpg
-
 # import the necessary packages
 import argparse
 import cv2
 import os
+from google.cloud import storage
+from hed.utils import read_images_path, combine_pictures, clean_images
+from tqdm import tqdm
 
 # construct the argument parser and parse the arguments
 PATH_MODEL = 'hed/hed_model'
-PATH_IMAGE = 'hed/images/guitar.jpg'
+images = []
+read_images_path('images/images', images)
+total = len(images)
+pbar = tqdm(total=total)
 
 class CropLayer(object):
 	def __init__(self, params, blobs):
@@ -54,32 +57,41 @@ net = cv2.dnn.readNetFromCaffe(protoPath, modelPath)
 cv2.dnn_registerLayer("Crop", CropLayer)
 
 # load the input image and grab its dimensions
-image = cv2.imread(PATH_IMAGE)
-(H, W) = image.shape[:2]
+for path in images:
+	image = cv2.imread(path)
+	(H, W) = image.shape[:2]
 
-# convert the image to grayscale, blur it, and perform Canny
-# edge detection
-print("[INFO] performing Canny edge detection...")
-gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-canny = cv2.Canny(blurred, 30, 150)
+	# convert the image to grayscale, blur it, and perform Canny
+	# edge detection
+	# print("[INFO] performing Canny edge detection...")
+	# gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+	# blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+	# canny = cv2.Canny(blurred, 30, 150)
 
-# construct a blob out of the input image for the Holistically-Nested
-# Edge Detector
-blob = cv2.dnn.blobFromImage(image, scalefactor=1.0, size=(W, H),
-	mean=(104.00698793, 116.66876762, 122.67891434),
-	swapRB=False, crop=False)
+	# construct a blob out of the input image for the Holistically-Nested
+	# Edge Detector
+	blob = cv2.dnn.blobFromImage(image, scalefactor=1.0, size=(W, H),
+		mean=(104.00698793, 116.66876762, 122.67891434),
+		swapRB=False, crop=False)
 
-# set the blob as the input to the network and perform a forward pass
-# to compute the edges
-print("[INFO] performing holistically-nested edge detection...")
-net.setInput(blob)
-hed = net.forward()
-hed = cv2.resize(hed[0, 0], (W, H))
-hed = (255 * hed).astype("uint8")
+	# set the blob as the input to the network and perform a forward pass
+	# to compute the edges
+	print("[INFO] performing holistically-nested edge detection...")
+	net.setInput(blob)
+	hed = net.forward()
+	hed = cv2.resize(hed[0, 0], (W, H))
+	hed = (255 * hed).astype("uint8")
+	hed = cv2.bitwise_not(hed)
 
-# show the output edge detection results for Canny and
-# Holistically-Nested Edge Detection
-cv2.imwrite("im_canny.jpg", canny)
-cv2.imwrite("im_hed.jpg", hed)
-cv2.waitKey(0)
+	# show the output edge detection results for Canny and
+	# Holistically-Nested Edge Detection
+	# cv2.imwrite("im_canny.jpg", canny)
+	path2 = path[:-4] + '_hed.jpg'
+	cv2.imwrite(path2, hed)
+	cv2.waitKey(0)
+
+	path3 = path[:-4] + '_combine.jpg'
+	combine_pictures(path, path2, path3)
+	pbar.update(1)
+
+clean_images('images/images')
