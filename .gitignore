@@ -1,5 +1,6 @@
 code/.ipynb_checkpoints*
-code/__pycache__
+__pycache__
 .DS_Store
 .vscode
 env
+*.jpg
