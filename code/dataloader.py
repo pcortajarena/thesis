@@ -51,6 +51,7 @@ class DataLoader():
 
         imgs_A = np.array(imgs_A)/127.5 - 1.
         imgs_B = np.array(imgs_B)/127.5 - 1.
+        text_descriptions = np.array(text_descriptions)
 
         return imgs_A, imgs_B, text_descriptions
 
@@ -87,6 +88,7 @@ class DataLoader():
 
             imgs_A = np.array(imgs_A)/127.5 - 1.
             imgs_B = np.array(imgs_B)/127.5 - 1.
+            text_descriptions = np.array(text_descriptions)
 
             yield imgs_A, imgs_B, text_descriptions
 

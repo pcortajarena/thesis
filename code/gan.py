@@ -93,11 +93,11 @@ class Pix2Pix():
             return u
 
         # Image input
-        d0 = Input(shape=self.img_shape)
+        sketch_image = Input(shape=self.img_shape)
         input_text = Input(shape=self.text_shape)
 
         # Downsampling
-        d1 = conv2d(d0, self.gf, bn=False)
+        d1 = conv2d(sketch_image, self.gf, bn=False)
         d2 = conv2d(d1, self.gf*2)
         d3 = conv2d(d2, self.gf*4)
         d4 = conv2d(d3, self.gf*8)
@@ -119,7 +119,7 @@ class Pix2Pix():
         u7 = UpSampling2D(size=2)(u7)
         output_img = Conv2D(self.channels, kernel_size=4, strides=1, padding='same', activation='tanh')(u7)
 
-        return Model([d0, input_text], output_img)
+        return Model([sketch_image, input_text], output_img)
 
     def build_discriminator(self):
 
@@ -173,7 +173,7 @@ class Pix2Pix():
                 #  Train Generator
                 # -----------------
 
-                # Train the generatorsº
+                # Train the generators
                 g_loss = self.combined.train_on_batch([imgs_A, imgs_B, text_desc], [valid, imgs_A])
 
                 elapsed_time = datetime.datetime.now() - start_time
