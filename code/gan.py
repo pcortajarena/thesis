@@ -22,7 +22,8 @@ class Pix2Pix():
         self.channels = 3
         self.img_shape = (self.img_rows, self.img_cols, self.channels)
         
-        self.text_shape = (1, 1, 512)
+        self.max_features = 512
+        self.text_shape = (1, 1, self.max_features)
 
         # Configure data loader
         self.dataset_name = 'fashiongen'
@@ -42,7 +43,7 @@ class Pix2Pix():
 
         # Build and compile the discriminator
         self.discriminator = self.build_discriminator()
-        self.discriminator.compile(loss='mse', optimizer=optimizer, metrics=['accuracy'])
+        self.discriminator.compile(loss='binary_crossentropy', optimizer=optimizer, metrics=['accuracy'])
 
         #-------------------------
         # Construct Computational
@@ -56,6 +57,7 @@ class Pix2Pix():
         img_A = Input(shape=self.img_shape)
         img_B = Input(shape=self.img_shape)
         text_input = Input(shape=self.text_shape)
+        text_input_d = Reshape(target_shape=(self.max_features,))(text_input)
 
         # By conditioning on B generate a fake version of A
         fake_A = self.generator([img_B, text_input])
@@ -64,7 +66,7 @@ class Pix2Pix():
         self.discriminator.trainable = False
 
         # Discriminators determines validity of translated images / condition pairs
-        valid = self.discriminator([fake_A, img_B])
+        valid = self.discriminator([fake_A, img_B, text_input_d])
 
         self.combined = Model(inputs=[img_A, img_B, text_input], outputs=[valid, fake_A])
         self.combined.compile(loss=['mse', 'mae'],
@@ -123,7 +125,11 @@ class Pix2Pix():
 
     def build_discriminator(self):
 
-        def d_layer(layer_input, filters, f_size=4, bn=True):
+        img_A = Input(shape=self.img_shape) 
+        img_B = Input(shape=self.img_shape)
+        input_text = Input(shape=(self.max_features,))
+        
+        def d_layer(layer_input, filters, f_size=4, bn=True, con=False):
             """Discriminator layer"""
             d = Conv2D(filters, kernel_size=f_size, strides=2, padding='same')(layer_input)
             d = LeakyReLU(alpha=0.2)(d)
@@ -131,28 +137,29 @@ class Pix2Pix():
                 d = BatchNormalization(momentum=0.8)(d)
             return d
 
-        img_A = Input(shape=self.img_shape)
-        img_B = Input(shape=self.img_shape)
-
         # Concatenate image and conditioning image by channels to produce input
         combined_imgs = Concatenate(axis=-1)([img_A, img_B])
 
         d1 = d_layer(combined_imgs, self.df, bn=False)
         d2 = d_layer(d1, self.df*2)
         d3 = d_layer(d2, self.df*4)
-        d4 = d_layer(d3, self.df*8)
+        d4 = d_layer(d3, self.df*8, con=True)
 
-        validity = Conv2D(1, kernel_size=4, strides=1, padding='same')(d4)
+        d5 = Conv2D(1, kernel_size=4, strides=1, padding='same')(d4)
+        d6 = Flatten()(d5)
+        d7 = Concatenate(axis=-1)([d6, input_text])
+        d8 = Dense(units=64, activation='relu')(d7)
+        validity = Dense(1, activation='sigmoid')(d8)
 
-        return Model([img_A, img_B], validity)
+        return Model([img_A, img_B, input_text], validity)
 
     def train(self, epochs, batch_size=1, sample_interval=50):
 
         start_time = datetime.datetime.now()
 
         # Adversarial loss ground truths
-        valid = np.ones((batch_size,) + self.disc_patch)
-        fake = np.zeros((batch_size,) + self.disc_patch)
+        valid = np.ones((batch_size,))
+        fake = np.zeros((batch_size,))
 
         for epoch in range(epochs):
             for batch_i, (imgs_A, imgs_B, text_desc) in enumerate(self.data_loader.load_batch(batch_size)):
@@ -162,11 +169,12 @@ class Pix2Pix():
                 # ---------------------
 
                 # Condition on B and generate a translated version
+                text_desc_d = np.reshape(text_desc, newshape=(batch_size, self.max_features))
                 fake_A = self.generator.predict([imgs_B, text_desc])
 
                 # Train the discriminators (original images = real / generated = Fake)
-                d_loss_real = self.discriminator.train_on_batch([imgs_A, imgs_B], valid)
-                d_loss_fake = self.discriminator.train_on_batch([fake_A, imgs_B], fake)
+                d_loss_real = self.discriminator.train_on_batch([imgs_A, imgs_B, text_desc_d], valid)
+                d_loss_fake = self.discriminator.train_on_batch([fake_A, imgs_B, text_desc_d], fake)
                 d_loss = 0.5 * np.add(d_loss_real, d_loss_fake)
 
                 # -----------------
@@ -215,4 +223,5 @@ class Pix2Pix():
 
 if __name__ == '__main__':
     gan = Pix2Pix()
-    gan.train(epochs=200, batch_size=1, sample_interval=200)
+    # gan.train(epochs=200, batch_size=10, sample_interval=200)
+    
