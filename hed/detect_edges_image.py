@@ -9,7 +9,7 @@ from tqdm import tqdm
 # construct the argument parser and parse the arguments
 PATH_MODEL = 'hed/hed_model'
 images = []
-read_images_path('images/images', images)
+read_images_path('images/fashiongen', images)
 total = len(images)
 pbar = tqdm(total=total)
 
@@ -76,7 +76,7 @@ for path in images:
 
 	# set the blob as the input to the network and perform a forward pass
 	# to compute the edges
-	print("[INFO] performing holistically-nested edge detection...")
+	# print("[INFO] performing holistically-nested edge detection...")
 	net.setInput(blob)
 	hed = net.forward()
 	hed = cv2.resize(hed[0, 0], (W, H))
@@ -92,6 +92,8 @@ for path in images:
 
 	path3 = path[:-4] + '_combine.jpg'
 	combine_pictures(path, path2, path3)
+	os.remove(path)
+	os.remove(path2)
 	pbar.update(1)
 
-clean_images('images/images')
+clean_images('images/fashiongen')
