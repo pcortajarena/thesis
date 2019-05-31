@@ -39,7 +39,7 @@ def clean_images(path):
 def divide_train_test(path):
     images = os.listdir(path)
     total = len(images)
-    train = total * 2 // 3
+    train = total * 3 // 4
     i = 0
     for im in images:
         if i < train:
