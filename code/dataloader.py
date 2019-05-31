@@ -8,11 +8,11 @@ import pandas as pd
 import re
 
 class DataLoader():
-    def __init__(self, dataset_name, img_res=(256, 256)):
+    def __init__(self, dataset_name, features, img_res=(256, 256)):
         self.dataset_name = dataset_name
         self.img_res = img_res
 
-        self.max_features = 512
+        self.max_features = features
         vectorizer = CountVectorizer(stop_words='english', max_features=self.max_features, binary=True)
         descriptions = pd.read_csv('../fashiongen/descriptions.csv')
         self.vect_descriptions = vectorizer.fit_transform(descriptions['name'].values)
