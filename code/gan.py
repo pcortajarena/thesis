@@ -1,11 +1,12 @@
 from __future__ import print_function, division
 import scipy
 
-from keras.layers import Input, Dense, Reshape, Flatten, Dropout, Concatenate
+from keras.layers import Input, Dense, Reshape, Flatten, Dropout, Concatenate, RepeatVector
 from keras.layers import BatchNormalization, Activation, ZeroPadding2D
 from keras.layers.advanced_activations import LeakyReLU
 from keras.layers.convolutional import UpSampling2D, Conv2D
 from keras.models import Sequential, Model
+from keras.utils import multi_gpu_model
 from keras.optimizers import Adam
 import datetime
 import matplotlib.pyplot as plt
@@ -27,7 +28,7 @@ class Pix2Pix():
         self.channels = 3
         self.img_shape = (self.img_rows, self.img_cols, self.channels)
         
-        self.max_features = 512
+        self.max_features = 100
         self.text_shape = (1, 1, self.max_features)
 
         # Configure data loader
@@ -48,11 +49,13 @@ class Pix2Pix():
 
         # Build and compile the discriminator (with or without text input)
         if self.simple_gan:
-            self.discriminator_simple = self.build_discriminator(text_gan=False)
-            self.discriminator_simple.compile(loss='binary_crossentropy', optimizer=optimizer, metrics=['accuracy'])
+            discriminator_simple = self.build_discriminator(text_gan=False)
+            self.discriminator_simple = multi_gpu_model(discriminator_simple, gpus=2)
+            self.discriminator_simple.compile(loss='mse', optimizer=optimizer, metrics=['accuracy'])
         if self.text_gan:
-            self.discriminator_text = self.build_discriminator(text_gan=True)
-            self.discriminator_text.compile(loss='binary_crossentropy', optimizer=optimizer, metrics=['accuracy'])
+            discriminator_text = self.build_discriminator(text_gan=True)
+            self.discriminator_text = multi_gpu_model(discriminator_text, gpus=2)
+            self.discriminator_text.compile(loss='mse', optimizer=optimizer, metrics=['accuracy'])
 
         #-------------------------
         # Construct Computational
@@ -64,10 +67,13 @@ class Pix2Pix():
             img_B = Input(shape=self.img_shape)
             text_input = Input(shape=self.text_shape)
             text_input_d = Reshape(target_shape=(self.max_features,))(text_input)
+            text_input_d = RepeatVector(self.img_cols*self.img_rows)(text_input_d)
+            text_input_d = Reshape((self.img_rows, self.img_cols, -1))(text_input_d)
 
         # Build the generator (with or without text input)
         if self.simple_gan:
             self.generator_simple = self.build_generator(text_gan=False)
+            self.generator_simple = multi_gpu_model(self.generator_simple, gpus=2)
 
             # By conditioning on B generate a fake version of A
             fake_A = self.generator_simple([img_B, text_input])
@@ -79,12 +85,14 @@ class Pix2Pix():
             valid = self.discriminator_simple([fake_A, img_B, text_input_d])
 
             self.combined_simple = Model(inputs=[img_A, img_B, text_input], outputs=[valid, fake_A])
+            self.combined_simple = multi_gpu_model(self.combined_simple, gpus=2)
             self.combined_simple.compile(loss=['mse', 'mae'],
                                 loss_weights=[1, 100],
                                 optimizer=optimizer)
         
         if self.text_gan:
             self.generator_text = self.build_generator(text_gan=True)
+            self.generator_text = multi_gpu_model(self.generator_text, gpus=2)
 
             # By conditioning on B generate a fake version of A
             fake_A = self.generator_text([img_B, text_input])
@@ -96,6 +104,7 @@ class Pix2Pix():
             valid = self.discriminator_text([fake_A, img_B, text_input_d])
 
             self.combined_text = Model(inputs=[img_A, img_B, text_input], outputs=[valid, fake_A])
+            self.combined_text = multi_gpu_model(self.combined_text, gpus=2)
             self.combined_text.compile(loss=['mse', 'mae'],
                                 loss_weights=[1, 100],
                                 optimizer=optimizer)
@@ -155,7 +164,7 @@ class Pix2Pix():
 
         img_A = Input(shape=self.img_shape) 
         img_B = Input(shape=self.img_shape)
-        input_text = Input(shape=(self.max_features,))
+        input_text = Input(shape=(self.img_rows, self.img_cols, self.max_features))
         
         def d_layer(layer_input, filters, f_size=4, bn=True, con=False):
             """Discriminator layer"""
@@ -167,19 +176,21 @@ class Pix2Pix():
 
         # Concatenate image and conditioning image by channels to produce input
         combined_imgs = Concatenate(axis=-1)([img_A, img_B])
+        if text_gan:
+            combined_imgs = Concatenate(axis=-1)([img_A, img_B, input_text])
 
         d1 = d_layer(combined_imgs, self.df, bn=False)
         d2 = d_layer(d1, self.df*2)
         d3 = d_layer(d2, self.df*4)
         d4 = d_layer(d3, self.df*8, con=True)
 
-        d5 = Conv2D(1, kernel_size=4, strides=1, padding='same')(d4)
-        d6 = Flatten()(d5)
-        if text_gan:
-            d6 = Concatenate(axis=-1)([d6, input_text])
-        d7 = Dense(units=1500, activation='relu')(d6)
-        d7 = Dense(units=1000, activation='relu')(d7)
-        validity = Dense(1, activation='sigmoid')(d7)
+        validity = Conv2D(1, kernel_size=4, strides=1, padding='same')(d4)
+        # d6 = Flatten()(d5)
+        # if text_gan:
+        #     d6 = Concatenate(axis=-1)([d6, input_text])
+        # d7 = Dense(units=1500, activation='relu')(d6)
+        # d7 = Dense(units=1000, activation='relu')(d7)
+        # validity = Dense(1, activation='sigmoid')(d7)
 
         return Model([img_A, img_B, input_text], validity)
 
@@ -188,19 +199,22 @@ class Pix2Pix():
         start_time = datetime.datetime.now()
 
         # Adversarial loss ground truths
-        valid = np.ones((batch_size,))
-        fake = np.zeros((batch_size,))
+        valid = np.ones((batch_size,) + self.disc_patch)
+        fake = np.zeros((batch_size,) + self.disc_patch)
 
         for epoch in range(epochs):
             
+            folder = 'models/epoch_{}/'.format(epoch)
+            os.mkdir(folder)
+
             if self.simple_gan:
-                self.generator_simple.save('models/generator_simple.h5')
-                self.discriminator_simple.save('models/discriminator_simple.h5')
-                self.combined_simple.save('models/combined_simple.h5')
+                self.generator_simple.save(folder + 'generator_simple.h5')
+                self.discriminator_simple.save(folder + 'discriminator_simple.h5')
+                self.combined_simple.save(folder + 'combined_simple.h5')
             if self.text_gan:
-                self.generator_text.save('models/generator_text.h5')
-                self.discriminator_text.save('models/discriminator_text.h5')
-                self.combined_text.save('models/combined_text.h5')
+                self.generator_text.save(folder + 'generator_text.h5')
+                self.discriminator_text.save(folder + 'discriminator_text.h5')
+                self.combined_text.save(folder + 'combined_text.h5')
 
             for batch_i, (imgs_A, imgs_B, text_desc) in enumerate(self.data_loader.load_batch(batch_size)):
 
@@ -211,6 +225,7 @@ class Pix2Pix():
                 # Condition on B and generate a translated version
                 if self.simple_gan:
                     text_desc_d = np.reshape(text_desc, newshape=(batch_size, self.max_features))
+                    text_desc_d = np.tile(text_desc_d, self.img_cols*self.img_rows).reshape(batch_size, self.img_rows, self.img_cols, self.max_features)
                     fake_A = self.generator_simple.predict([imgs_B, text_desc])
 
                     # Train the discriminators (original images = real / generated = Fake)
@@ -235,6 +250,7 @@ class Pix2Pix():
 
                 if self.text_gan:
                     text_desc_d = np.reshape(text_desc, newshape=(batch_size, self.max_features))
+                    text_desc_d = np.tile(text_desc_d, self.img_cols*self.img_rows).reshape(batch_size, self.img_rows, self.img_cols, self.max_features)
                     fake_A = self.generator_text.predict([imgs_B, text_desc])
 
                     # Train the discriminators (original images = real / generated = Fake)
@@ -259,13 +275,13 @@ class Pix2Pix():
 
                 # If at save interval => save generated image samples
                 if batch_i % sample_interval == 0:
-                    self.sample_images(epoch, batch_i)
+                    self.sample_images(folder, batch_i)
 
-    def sample_images(self, epoch, batch_i):
-        os.makedirs('images/%s' % self.dataset_name, exist_ok=True)
-        r, c = 3, 3
+    def sample_images(self, path, batch_i):
 
-        imgs_A, imgs_B, text_desc = self.data_loader.load_data(batch_size=3, is_testing=True)
+        samples = 3
+        imgs_A, imgs_B, text_desc = self.data_loader.load_data(batch_size=samples, is_testing=True)
+        
         if self.simple_gan:
             fake_A_s = self.generator_simple.predict([imgs_B, text_desc])
             gen_imgs_s = np.concatenate([imgs_B, fake_A_s, imgs_A])
@@ -276,20 +292,18 @@ class Pix2Pix():
             # titles = ['Condition', 'Generated', 'Original']
             # fig, axs = plt.subplots(r, c)
             cnt = 0
-            for i in range(r):
-                for j in range(c):
-                    # axs[i,j].imshow(gen_imgs_s[cnt])
-                    # axs[i, j].set_title(titles[i])
-                    # axs[i,j].axis('off')
-                    plt.imshow(gen_imgs_s[cnt])
-                    cnt += 1
-                    plt.axis('off')
-                    plt.savefig("images/%s/%d_%d_%s_%d.png" % ('compare', epoch, batch_i, 'simple', cnt))
-                    plt.close()
+            for i in range(samples*3):
+                # axs[i,j].imshow(gen_imgs_s[cnt])
+                # axs[i, j].set_title(titles[i])
+                # axs[i,j].axis('off')
+                plt.imshow(gen_imgs_s[cnt])
+                cnt += 1
+                plt.axis('off')
+                plt.savefig(path + 'simple_{}_{}.png'.format(batch_i, cnt))
+                plt.close()
 
         if self.text_gan:
             fake_A_t = self.generator_text.predict([imgs_B, text_desc])
-
             gen_imgs_t = np.concatenate([imgs_B, fake_A_t, imgs_A])
 
             # Rescale images 0 - 1
@@ -298,18 +312,17 @@ class Pix2Pix():
             # titles = ['Condition', 'Generated', 'Original']
             # fig, axs = plt.subplots(r, c)
             cnt = 0
-            for i in range(r):
-                for j in range(c):
-                    # axs[i,j].imshow(gen_imgs_t[cnt])
-                    #axs[i, j].set_title(titles[i])
-                    #axs[i,j].axis('off')
-                    plt.imshow(gen_imgs_t[cnt])
-                    cnt += 1
-                    plt.axis('off')
-                    plt.savefig("images/%s/%d_%d_%s_%d.png" % ('text', epoch, batch_i, 'text', cnt))
-                    plt.close()
+            for i in range(samples*3):
+                # axs[i,j].imshow(gen_imgs_t[cnt])
+                #axs[i, j].set_title(titles[i])
+                #axs[i,j].axis('off')
+                plt.imshow(gen_imgs_t[cnt])
+                cnt += 1
+                plt.axis('off')
+                plt.savefig(path + 'text_{}_{}.png'.format(batch_i, cnt))
+                plt.close()
 
 
 if __name__ == '__main__':
-    gan = Pix2Pix(simple_gan=False, text_gan=True)
+    gan = Pix2Pix(simple_gan=True, text_gan=True)
     gan.train(epochs=10, batch_size=10, sample_interval=250)
