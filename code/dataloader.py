@@ -13,9 +13,9 @@ class DataLoader():
         self.img_res = img_res
 
         self.max_features = features
-        vectorizer = CountVectorizer(stop_words='english', max_features=self.max_features, binary=True)
-        descriptions = pd.read_csv('../fashiongen/descriptions.csv')
-        self.vect_descriptions = vectorizer.fit_transform(descriptions['name'].values)
+        self.vectorizer = CountVectorizer(stop_words='english', max_features=self.max_features, binary=True)
+        self.descriptions = pd.read_csv('../fashiongen/descriptions.csv')
+        self.vect_descriptions = self.vectorizer.fit_transform(self.descriptions['name'].values)
 
     def load_data(self, batch_size=1, is_testing=False):
         data_type = "train" if not is_testing else "test"
@@ -29,7 +29,7 @@ class DataLoader():
 
         for img_path in batch_images:
             img = self.imread(img_path)
-            index = re.findall('\d+', img_path)
+            index = re.findall(r'\d+', img_path)
             index = int(index[0]) - 1
 
             h, w, _ = img.shape
@@ -65,7 +65,7 @@ class DataLoader():
             batch = path[i*batch_size:(i+1)*batch_size]
             imgs_A, imgs_B, text_descriptions = [], [], []
             for img in batch:
-                index = re.findall('\d+', img)
+                index = re.findall(r'\d+', img)
                 index = int(index[0]) - 1
                 img = self.imread(img)
 
