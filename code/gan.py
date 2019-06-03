@@ -5,7 +5,7 @@ from keras.layers import Input, Dense, Reshape, Flatten, Dropout, Concatenate, R
 from keras.layers import BatchNormalization, Activation, ZeroPadding2D
 from keras.layers.advanced_activations import LeakyReLU
 from keras.layers.convolutional import UpSampling2D, Conv2D
-from keras.models import Sequential, Model
+from keras.models import Sequential, Model, load_model
 from keras.utils import multi_gpu_model
 from keras.optimizers import Adam
 import datetime
@@ -13,101 +13,113 @@ import matplotlib.pyplot as plt
 import sys
 import numpy as np
 import os
+import re
 from dataloader import DataLoader
 
 class Pix2Pix():
-    def __init__(self, simple_gan=False, text_gan=True):
+    def __init__(self, simple_gan=False, text_gan=True, path=None):
 
-        # Initilize variables
-        self.simple_gan = simple_gan
-        self.text_gan = text_gan
+        self.path = path
+        if self.path is None:
+            # Initilize variables
+            self.simple_gan = simple_gan
+            self.text_gan = text_gan
 
-        # Input shape
-        self.img_rows = 256
-        self.img_cols = 256
-        self.channels = 3
-        self.img_shape = (self.img_rows, self.img_cols, self.channels)
-        
-        self.max_features = 100
-        self.text_shape = (1, 1, self.max_features)
+            # Input shape
+            self.img_rows = 256
+            self.img_cols = 256
+            self.channels = 3
+            self.img_shape = (self.img_rows, self.img_cols, self.channels)
+            
+            self.max_features = 100
+            self.text_shape = (1, 1, self.max_features)
 
-        # Configure data loader
-        self.dataset_name = 'fashiongen'
-        self.data_loader = DataLoader(dataset_name=self.dataset_name, features=self.max_features,
-                                      img_res=(self.img_rows, self.img_cols))
+            # Configure data loader
+            self.dataset_name = 'fashiongen'
+            self.data_loader = DataLoader(dataset_name=self.dataset_name, features=self.max_features,
+                                        img_res=(self.img_rows, self.img_cols))
 
 
-        # Calculate output shape of D (PatchGAN)
-        patch = int(self.img_rows / 2**4)
-        self.disc_patch = (patch, patch, 1)
+            # Calculate output shape of D (PatchGAN)
+            patch = int(self.img_rows / 2**4)
+            self.disc_patch = (patch, patch, 1)
 
-        # Number of filters in the first layer of G and D
-        self.gf = 64
-        self.df = 64
+            # Number of filters in the first layer of G and D
+            self.gf = 64
+            self.df = 64
 
-        optimizer = Adam(0.0002, 0.5)
+            optimizer = Adam(0.0002, 0.5)
 
-        # Build and compile the discriminator (with or without text input)
-        if self.simple_gan:
-            discriminator_simple = self.build_discriminator(text_gan=False)
-            self.discriminator_simple = multi_gpu_model(discriminator_simple, gpus=2)
-            self.discriminator_simple.compile(loss='mse', optimizer=optimizer, metrics=['accuracy'])
-        if self.text_gan:
-            discriminator_text = self.build_discriminator(text_gan=True)
-            self.discriminator_text = multi_gpu_model(discriminator_text, gpus=2)
-            self.discriminator_text.compile(loss='mse', optimizer=optimizer, metrics=['accuracy'])
+            # Build and compile the discriminator (with or without text input)
+            if self.simple_gan:
+                discriminator_simple = self.build_discriminator(text_gan=False)
+                self.discriminator_simple = multi_gpu_model(discriminator_simple, gpus=2)
+                self.discriminator_simple.compile(loss='mse', optimizer=optimizer, metrics=['accuracy'])
+            if self.text_gan:
+                discriminator_text = self.build_discriminator(text_gan=True)
+                self.discriminator_text = multi_gpu_model(discriminator_text, gpus=2)
+                self.discriminator_text.compile(loss='mse', optimizer=optimizer, metrics=['accuracy'])
 
-        #-------------------------
-        # Construct Computational
-        #   Graph of Generator
-        #-------------------------
+            #-------------------------
+            # Construct Computational
+            #   Graph of Generator
+            #-------------------------
 
-        # Input images and their conditioning images
-            img_A = Input(shape=self.img_shape)
-            img_B = Input(shape=self.img_shape)
-            text_input = Input(shape=self.text_shape)
-            text_input_d = Reshape(target_shape=(self.max_features,))(text_input)
-            text_input_d = RepeatVector(self.img_cols*self.img_rows)(text_input_d)
-            text_input_d = Reshape((self.img_rows, self.img_cols, -1))(text_input_d)
+            # Input images and their conditioning images
+                img_A = Input(shape=self.img_shape)
+                img_B = Input(shape=self.img_shape)
+                text_input = Input(shape=self.text_shape)
+                text_input_d = Reshape(target_shape=(self.max_features,))(text_input)
+                text_input_d = RepeatVector(self.img_cols*self.img_rows)(text_input_d)
+                text_input_d = Reshape((self.img_rows, self.img_cols, -1))(text_input_d)
 
-        # Build the generator (with or without text input)
-        if self.simple_gan:
-            self.generator_simple = self.build_generator(text_gan=False)
-            self.generator_simple = multi_gpu_model(self.generator_simple, gpus=2)
+            # Build the generator (with or without text input)
+            if self.simple_gan:
+                self.generator_simple = self.build_generator(text_gan=False)
+                self.generator_simple = multi_gpu_model(self.generator_simple, gpus=2)
 
-            # By conditioning on B generate a fake version of A
-            fake_A = self.generator_simple([img_B, text_input])
+                # By conditioning on B generate a fake version of A
+                fake_A = self.generator_simple([img_B, text_input])
 
-            # For the combined model we will only train the generator
-            self.discriminator_simple.trainable = False
+                # For the combined model we will only train the generator
+                self.discriminator_simple.trainable = False
 
-            # Discriminators determines validity of translated images / condition pairs
-            valid = self.discriminator_simple([fake_A, img_B, text_input_d])
+                # Discriminators determines validity of translated images / condition pairs
+                valid = self.discriminator_simple([fake_A, img_B, text_input_d])
 
-            self.combined_simple = Model(inputs=[img_A, img_B, text_input], outputs=[valid, fake_A])
-            self.combined_simple = multi_gpu_model(self.combined_simple, gpus=2)
-            self.combined_simple.compile(loss=['mse', 'mae'],
-                                loss_weights=[1, 100],
-                                optimizer=optimizer)
-        
-        if self.text_gan:
-            self.generator_text = self.build_generator(text_gan=True)
-            self.generator_text = multi_gpu_model(self.generator_text, gpus=2)
+                self.combined_simple = Model(inputs=[img_A, img_B, text_input], outputs=[valid, fake_A])
+                self.combined_simple = multi_gpu_model(self.combined_simple, gpus=2)
+                self.combined_simple.compile(loss=['mse', 'mae'],
+                                    loss_weights=[1, 100],
+                                    optimizer=optimizer)
+            
+            if self.text_gan:
+                self.generator_text = self.build_generator(text_gan=True)
+                self.generator_text = multi_gpu_model(self.generator_text, gpus=2)
 
-            # By conditioning on B generate a fake version of A
-            fake_A = self.generator_text([img_B, text_input])
+                # By conditioning on B generate a fake version of A
+                fake_A = self.generator_text([img_B, text_input])
 
-            # For the combined model we will only train the generator
-            self.discriminator_text.trainable = False
+                # For the combined model we will only train the generator
+                self.discriminator_text.trainable = False
 
-            # Discriminators determines validity of translated images / condition pairs
-            valid = self.discriminator_text([fake_A, img_B, text_input_d])
+                # Discriminators determines validity of translated images / condition pairs
+                valid = self.discriminator_text([fake_A, img_B, text_input_d])
 
-            self.combined_text = Model(inputs=[img_A, img_B, text_input], outputs=[valid, fake_A])
-            self.combined_text = multi_gpu_model(self.combined_text, gpus=2)
-            self.combined_text.compile(loss=['mse', 'mae'],
-                                loss_weights=[1, 100],
-                                optimizer=optimizer)
+                self.combined_text = Model(inputs=[img_A, img_B, text_input], outputs=[valid, fake_A])
+                self.combined_text = multi_gpu_model(self.combined_text, gpus=2)
+                self.combined_text.compile(loss=['mse', 'mae'],
+                                    loss_weights=[1, 100],
+                                    optimizer=optimizer)
+        else:
+            if self.simple_gan:
+                self.discriminator_simple = load_model(path + 'discriminator_simple.h5')
+                self.generator_simple = load_model(path + 'generator_simple.h5')
+                self.combined_simple = load_model(path + 'combined_simple.h5')
+            if self.text_gan:
+                self.discriminator_text = load_model(path + 'discriminator_text.h5')
+                self.generator_text = load_model(path + 'generator_text.h5')
+                self.combined_text = load_model(path + 'combined_text.h5')
 
     def build_generator(self, text_gan):
         """U-Net Generator"""
@@ -204,17 +216,13 @@ class Pix2Pix():
 
         for epoch in range(epochs):
             
-            folder = 'models/epoch_{}/'.format(epoch)
-            os.mkdir(folder)
-
-            if self.simple_gan:
-                self.generator_simple.save(folder + 'generator_simple.h5')
-                self.discriminator_simple.save(folder + 'discriminator_simple.h5')
-                self.combined_simple.save(folder + 'combined_simple.h5')
-            if self.text_gan:
-                self.generator_text.save(folder + 'generator_text.h5')
-                self.discriminator_text.save(folder + 'discriminator_text.h5')
-                self.combined_text.save(folder + 'combined_text.h5')
+            if self.path is None:
+                folder = 'models/epoch_{}/'.format(epoch)
+                os.mkdir(folder)
+            else:
+                index = int(re.findall(r'\d+', self.path)[0])+1
+                folder = 'models/epoch_{}/'.format(index)
+                os.mkdir(folder)
 
             for batch_i, (imgs_A, imgs_B, text_desc) in enumerate(self.data_loader.load_batch(batch_size)):
 
@@ -277,6 +285,15 @@ class Pix2Pix():
                 if batch_i % sample_interval == 0:
                     self.sample_images(folder, batch_i)
 
+            if self.simple_gan:
+                self.generator_simple.save(folder + 'generator_simple.h5')
+                self.discriminator_simple.save(folder + 'discriminator_simple.h5')
+                self.combined_simple.save(folder + 'combined_simple.h5')
+            if self.text_gan:
+                self.generator_text.save(folder + 'generator_text.h5')
+                self.discriminator_text.save(folder + 'discriminator_text.h5')
+                self.combined_text.save(folder + 'combined_text.h5')
+
     def sample_images(self, path, batch_i):
 
         samples = 3
@@ -324,5 +341,5 @@ class Pix2Pix():
 
 
 if __name__ == '__main__':
-    gan = Pix2Pix(simple_gan=True, text_gan=True)
+    gan = Pix2Pix(simple_gan=True, text_gan=True, path='models/epoch_0/')
     gan.train(epochs=10, batch_size=10, sample_interval=250)
